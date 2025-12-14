@@ -120,6 +120,5 @@ USER rosusr
 # Set the working directory for the user
 WORKDIR /home/rosusr
 
-# # Command to execute QGC automatically on container start (uncomment to enable)
-# # Default entry command
-# CMD ["/usr/local/bin/QGroundControl"]
+# bash
+CMD ["bash"]
