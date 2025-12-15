@@ -1,43 +1,59 @@
-# Base Image 
-FROM ros2-humble-dev:latest
+# 1. Base Image
+FROM ghcr.io/srindot/ros2-humble-dev:latest
 
-# Label 
+# Label
 LABEL handler="Srindot"
 LABEL github="https://github.com/Srindot"
 
 # Set environment variables
-ENV DEBIAN_FRONTEND=noninteractive 
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Setting the working directory
-WORKDIR /home/rosusr
+# 2. Switch to ROOT for system installs
+USER root
 
-# Switch to the non-root user (already created in the base image)
-USER rosusr
-
-# Install Python packages and downgrade setuptools
+# Install Python packages (Includes kconfiglib/jinja2 to fix menuconfig error)
 RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install --user --break-system-packages empy==3.3.4 pyros-genmsg setuptools==70.0.0
+    python3 -m pip install --break-system-packages \
+    empy==3.3.4 \
+    pyros-genmsg \
+    setuptools==70.0.0 \
+    kconfiglib \
+    jinja2 \
+    jsonschema \
+    future
 
-# Clone PX4 repository and set up the environment
+# 3. Clone PX4 and Run Setup
+# Run as ROOT so ubuntu.sh can install apt packages
+WORKDIR /home/rosusr
 RUN git clone https://github.com/PX4/PX4-Autopilot.git --recursive && \
     cd PX4-Autopilot && \
     bash ./Tools/setup/ubuntu.sh && \
-    make px4_sitl
+    # Give ownership back to 'rosusr'
+    chown -R rosusr:rosusr /home/rosusr/PX4-Autopilot
 
-# MicroXrceDDS Agent
+# 4. Build PX4 SITL
+# Switch to USER to build (prevents root-owned build files)
+USER rosusr
+WORKDIR /home/rosusr/PX4-Autopilot
+RUN make px4_sitl
+
+# 5. Micro-XRCE-DDS Agent
+# Switch back to ROOT for system-wide install
 USER root
+WORKDIR /home/rosusr
 
-# Clone and build Micro XRCE-DDS Agent with fixed FastDDS tag
 RUN git clone -b v2.4.2 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git && \
     cd Micro-XRCE-DDS-Agent && \
-    sed -i '99s/.*/set(_fastdds_tag 2.12.1)/' CMakeLists.txt && \
+    # FIX: Changed '2.12.1' to 'v2.12.1' and used regex for safety
+    sed -i 's/set(_fastdds_tag .*/set(_fastdds_tag v2.12.1)/' CMakeLists.txt && \
     mkdir build && cd build && \
     cmake .. && \
     make && \
     make install && \
     ldconfig /usr/local/lib/
 
-# Install QGroundControl dependencies and download the AppImage
+# 6. QGroundControl & Final Dependencies
+# FIX: Used GitHub URL for reliable download
 RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-libav \
@@ -45,11 +61,14 @@ RUN apt-get update && apt-get install -y \
     libfuse2 \
     libxcb-xinerama0 \
     libxkbcommon-x11-0 \
-    libxcb-cursor-dev && \
-    apt-get remove modemmanager -y && \
-    wget https://d176tv9ibo4jno.cloudfront.net/latest/QGroundControl.AppImage -O /usr/local/bin/QGroundControl && \
-    chmod +x /usr/local/bin/QGroundControl
+    libxcb-cursor0 \
+    && apt-get remove modemmanager -y || true \
+    && wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.4/QGroundControl.AppImage -O /usr/local/bin/QGroundControl \
+    && chmod +x /usr/local/bin/QGroundControl
 
-# Switch back to the non-root user
+# Cleanup
+RUN rm -rf /var/lib/apt/lists/*
+
+# 7. Final User Switch
 USER rosusr
-
+WORKDIR /home/rosusr
